@@ -27,4 +27,21 @@ class User {
         $stmt->execute();
         return $this->conn->lastInsertId();
     }
+
+    public function updatePassword($userId, $hashedPassword) {
+        $query = "UPDATE {$this->table} SET password = :password WHERE user_id = :user_id";
+        $stmt = $this->conn->prepare($query);
+        $stmt->bindValue(':password', $hashedPassword);
+        $stmt->bindValue(':user_id', (int) $userId, PDO::PARAM_INT);
+        $stmt->execute();
+    }
+
+    public function updateProfile($userId, $name, $email) {
+        $query = "UPDATE {$this->table} SET name = :name, email = :email WHERE user_id = :user_id";
+        $stmt = $this->conn->prepare($query);
+        $stmt->bindValue(':name', $name);
+        $stmt->bindValue(':email', $email);
+        $stmt->bindValue(':user_id', (int) $userId, PDO::PARAM_INT);
+        $stmt->execute();
+    }
 }

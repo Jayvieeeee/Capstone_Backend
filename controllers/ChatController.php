@@ -38,7 +38,12 @@ class ChatController {
         }
 
         Response::success(
-            $this->toInsight($chatId ? 'chat-' . $chatId : 'ask-' . uniqid(), $reply, date('g:i A'))
+            $this->toChatMessage(
+                $chatId ? 'chat-' . $chatId . '-assistant' : 'ask-' . uniqid(),
+                $reply,
+                date('g:i A'),
+                'assistant'
+            )
         );
     }
 
@@ -52,17 +57,25 @@ class ChatController {
 
         $rows = (new ChatLog($this->db))->getByUser($userId);
 
-        $insights = array_map(function ($row) {
-            return $this->toInsight(
-                'chat-' . $row['chat_id'],
-                $row['response'],
-                date('g:i A', strtotime($row['created_at']))
+        $messages = [];
+        foreach (array_reverse($rows) as $row) {
+            $timestamp = date('g:i A', strtotime($row['created_at']));
+            $messages[] = $this->toChatMessage(
+                'chat-' . $row['chat_id'] . '-user',
+                $row['question'],
+                $timestamp,
+                'user'
             );
-        }, $rows);
+            $messages[] = $this->toChatMessage(
+                'chat-' . $row['chat_id'] . '-assistant',
+                $row['response'],
+                $timestamp,
+                'assistant'
+            );
+        }
 
         Response::success([
-            'syncedLabel' => 'Synced just now',
-            'insights' => $insights,
+            'messages' => $messages,
         ]);
     }
 
@@ -120,13 +133,12 @@ class ChatController {
         return $decoded;
     }
 
-    // Same shape as the AiInsight type in the app.
-    private function toInsight($id, $message, $time) {
+    private function toChatMessage($id, $message, $time, $role) {
         return [
             'id' => $id,
             'message' => $message,
             'timestamp' => $time,
-            'tone' => 'action',
+            'role' => $role,
         ];
     }
 }

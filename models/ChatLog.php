@@ -20,7 +20,7 @@ class ChatLog {
     }
 
     public function getByUser($userId, $limit = 50) {
-        $query = "SELECT chat_id, response, created_at
+        $query = "SELECT chat_id, question, response, created_at
                   FROM {$this->table}
                   WHERE user_id = :user_id
                   ORDER BY created_at DESC, chat_id DESC
