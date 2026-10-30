@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/../models/ChatLog.php';
+require_once __DIR__ . '/SensorController.php';
 require_once __DIR__ . '/../utils/Response.php';
 
 class ChatController {
@@ -26,12 +27,20 @@ class ChatController {
             Response::error('user_id and message are required.', 422);
         }
 
-        $aiResult = $this->callAiService($this->buildAiPayload($message));
+        $chatLog = new ChatLog($this->db);
+        $history = $this->buildAiHistory($chatLog->getByUser($userId, 10));
+        try {
+            $payload = $this->buildAiPayload($message, $history);
+        } catch (PDOException $e) {
+            error_log('Unable to load sensor context for AI: ' . $e->getMessage());
+            Response::error('Unable to load current sensor data for the AI assistant.', 500);
+        }
+        $aiResult = $this->callAiService($payload);
         $reply = $this->parseAiReply($aiResult);
 
         $chatId = null;
         try {
-            $chatId = (new ChatLog($this->db))->create($userId, $message, $reply);
+            $chatId = $chatLog->create($userId, $message, $reply);
         } catch (PDOException $e) {
             // Saving history should never block the answer from reaching the user.
             error_log('Chat log insert failed: ' . $e->getMessage());
@@ -82,8 +91,67 @@ class ChatController {
     // ---------- Adapt these two methods to your teammate's API ----------
 
     // What we send to FastAPI.
-    private function buildAiPayload($message) {
-        return ['message' => $message];
+    private function buildAiPayload($message, array $history = []) {
+        $sensorController = new SensorController($this->db);
+        $records = $sensorController->historyForAssistant();
+        $latest = $records[0] ?? null;
+
+        $sensorData = [];
+        if ($latest !== null) {
+            $sensorData = [
+                'recorded_at' => $latest['timestamp'],
+                'temperature' => $latest['temperature'],
+                'humidity' => $latest['humidity'],
+                'soil_moisture' => $latest['soil_moisture'],
+                'water_level' => $latest['soil_moisture'],
+                'soil_ph' => $latest['soil_ph'],
+                'soil_pH' => $latest['soil_ph'],
+                'light_intensity' => $latest['light_intensity'],
+                'sensor_units' => [
+                    'temperature' => 'celsius',
+                    'humidity' => 'percent',
+                    'soil_moisture' => 'percent',
+                    'soil_ph' => 'pH',
+                    'light_intensity' => 'lux'
+                ],
+                'source' => 'capstone_db.sensor_readings'
+            ];
+        }
+
+        $sensorRecords = array_map(static function (array $record): array {
+            return [
+                'recorded_at' => $record['timestamp'],
+                'temperature' => $record['temperature'],
+                'humidity' => $record['humidity'],
+                'soil_moisture' => $record['soil_moisture'],
+                'water_level' => $record['soil_moisture'],
+                'soil_ph' => $record['soil_ph'],
+                'light_intensity' => $record['light_intensity']
+            ];
+        }, $records);
+
+        return [
+            'message' => $message,
+            'history' => $history,
+            'sensor_data' => $sensorData,
+            'sensor_records' => $sensorRecords,
+            'sensor_records_total' => $sensorController->countForAssistant(),
+        ];
+    }
+
+    private function buildAiHistory(array $rows) {
+        $history = [];
+        foreach (array_reverse($rows) as $row) {
+            $history[] = [
+                'role' => 'user',
+                'content' => $row['question'],
+            ];
+            $history[] = [
+                'role' => 'assistant',
+                'content' => $row['response'],
+            ];
+        }
+        return $history;
     }
 
     // Where the answer lives in FastAPI's JSON. Add keys here if theirs differs.

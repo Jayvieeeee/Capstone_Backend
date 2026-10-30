@@ -17,10 +17,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit;
 }
 
-// TEMPORARY DEBUG LOGGING (method + route only, never request bodies)
-$logEntry = date('Y-m-d H:i:s') . ' | ' . $_SERVER['REQUEST_METHOD'] . ' | ' . ($_GET['url'] ?? '') . "\n";
-file_put_contents(__DIR__ . '/debug.log', $logEntry, FILE_APPEND);
-
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/utils/Response.php';
 require_once __DIR__ . '/routes/auth.php';

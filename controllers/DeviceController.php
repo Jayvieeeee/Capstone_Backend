@@ -1,6 +1,8 @@
 
 <?php
 
+require_once __DIR__ . '/PumpAutomation.php';
+
 function deviceJsonResponse(
     int $statusCode,
     array $data
@@ -16,7 +18,7 @@ function setDeviceState(PDO $db, array $input): void
     $device = strtolower(trim($input['device'] ?? ''));
     $action = strtoupper(trim($input['action'] ?? ''));
 
-    $allowedDevices = ['light', 'fan', 'pump'];
+    $allowedDevices = ['light', 'pump'];
     $allowedActions = ['ON', 'OFF'];
 
     if (!in_array($device, $allowedDevices, true)) {
@@ -35,30 +37,50 @@ function setDeviceState(PDO $db, array $input): void
         return;
     }
 
-    $sql = "UPDATE device_states
-            SET desired_state = ?
-            WHERE device_name = ?";
-
-    $stmt = $db->prepare($sql);
-    $stmt->execute([$action, $device]);
-
-    if ($stmt->rowCount() === 0) {
-        // Check if the device exists even if its state
-        // was already equal to the requested state.
-        $check = $db->prepare(
-            "SELECT device_name
-             FROM device_states
-             WHERE device_name = ?"
-        );
-        $check->execute([$device]);
-
-        if (!$check->fetch(PDO::FETCH_ASSOC)) {
-            deviceJsonResponse(404, [
-                'success' => false,
-                'message' => 'Device not found.'
-            ]);
-            return;
+    try {
+        if ($device === 'pump') {
+            PumpAutomation::ensureReady($db);
+            if ($action === 'ON' && PumpAutomation::isTimedOut($db)) {
+                deviceJsonResponse(409, [
+                    'success' => false,
+                    'message' => 'The pump timed out and is locked off until soil moisture reaches the optimal range (40%).'
+                ]);
+                return;
+            }
         }
+
+        $sql = "UPDATE device_states
+                SET desired_state = ?
+                WHERE device_name = ?";
+        $stmt = $db->prepare($sql);
+        $stmt->execute([$action, $device]);
+
+        if ($stmt->rowCount() === 0) {
+            $check = $db->prepare(
+                "SELECT device_name
+                 FROM device_states
+                 WHERE device_name = ?"
+            );
+            $check->execute([$device]);
+            if (!$check->fetch(PDO::FETCH_ASSOC)) {
+                deviceJsonResponse(404, [
+                    'success' => false,
+                    'message' => 'Device not found.'
+                ]);
+                return;
+            }
+        }
+
+        if ($device === 'pump') {
+            PumpAutomation::recordManualCommand($db, $action);
+        }
+    } catch (PDOException $e) {
+        error_log('Device command update failed: ' . $e->getMessage());
+        deviceJsonResponse(500, [
+            'success' => false,
+            'message' => 'Unable to save the device command.'
+        ]);
+        return;
     }
 
     deviceJsonResponse(200, [
@@ -71,23 +93,40 @@ function setDeviceState(PDO $db, array $input): void
 
 function getDeviceStates(PDO $db): void
 {
-    $stmt = $db->query(
-        "SELECT device_name, desired_state, actual_state,
-                updated_at, reported_at
-         FROM device_states
-         ORDER BY device_name"
-    );
+    try {
+        PumpAutomation::ensureReady($db);
+        $db->beginTransaction();
+        PumpAutomation::enforceTimeout($db);
+        $stmt = $db->query(
+            "SELECT device_name, desired_state, actual_state,
+                    updated_at, reported_at
+             FROM device_states
+             WHERE device_name IN ('light', 'pump')
+             ORDER BY device_name"
+        );
+        $devices = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $db->commit();
 
-    deviceJsonResponse(200, [
-        'success' => true,
-        'devices' => $stmt->fetchAll(PDO::FETCH_ASSOC)
-    ]);
+        deviceJsonResponse(200, [
+            'success' => true,
+            'devices' => $devices
+        ]);
+    } catch (PDOException $e) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        error_log('Device status query failed: ' . $e->getMessage());
+        deviceJsonResponse(500, [
+            'success' => false,
+            'message' => 'Unable to load device states.'
+        ]);
+    }
 }
 
 function reportDeviceStates(PDO $db, array $input): void
 {
     $states = $input['devices'] ?? null;
-    $allowedDevices = ['light', 'fan', 'pump'];
+    $allowedDevices = ['light', 'pump'];
     $allowedStates = ['ON', 'OFF'];
 
     if (!is_array($states)) {

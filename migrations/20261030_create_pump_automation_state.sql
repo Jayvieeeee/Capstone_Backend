@@ -1,0 +1,8 @@
+CREATE TABLE IF NOT EXISTS pump_automation_state (
+    id TINYINT UNSIGNED NOT NULL PRIMARY KEY,
+    timeout_lockout TINYINT(1) NOT NULL DEFAULT 0,
+    pump_started_at TIMESTAMP NULL DEFAULT NULL,
+    cooldown_until TIMESTAMP NULL DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+INSERT IGNORE INTO pump_automation_state (id) VALUES (1);
